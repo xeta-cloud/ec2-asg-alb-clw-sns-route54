@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description : This Project deploys a static web page using EC2,ASG,ALB,CLW,SNS and ROute53.
+
+Parameters: 
+  WebServerLaunchTemplateName:
+    AllowedPattern: '[a-zA-Z0-9\(\)\.\-/_]+'
+    ConstraintDescription: Must be unique to this account. Max 128 chars. No spaces or special characters like '&', '*', '@'.
+    Default: Lamp-Server-Launch-Template
+    Description: Name of launch template
+    Type: String
+
+  EC2ImageID:
+    Type: String
+    Default: ami-02db68a01488594c5
+    AllowedValues:
+      - ami-02db68a01488594c5
+      - ami-070fe338fb2265e00
+      - ami-03c2970bdb10a9e99
+    Description: Enter ami value
+
+  InstancetypeP:
+    Description: Enter t2.micro, m1.small, or m1.large. Default is t3.micro.
+    Type: String
+    Default: t3.micro
+
+  EC2KeyName:
+    Description: Name of an EC2 KeyPair to enable SSH access to the instance.
+    Type: "AWS::EC2::KeyPair::KeyName"
+    Default: server-key
+    
+  SGforASG: 
+    Description: Launch template SG to listen to tcp form ALB and allow SSH traffic
+    Type: String
+    Default: sg-0935beb2f0738333d
+
+  SGforALB: 
+    Description: Launch template SG to listen to HTTP traffic from anywhere
+    Type: String
+    Default: sg-094a66acfa4b69d26        
+
+  OperatorEMail:
+    Description: A valid EMail address to notify if there are any scaling operations
+    Type: String
+    Default: engineersaheedola@gmail.com
+      
+Resources:
+  WebServerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Ref WebServerLaunchTemplateName
+      LaunchTemplateData:
+        ImageId: !Ref EC2ImageID
+        InstanceType: !Ref InstancetypeP
+        KeyName: !Ref EC2KeyName
+        Monitoring: 
+          Enabled: true
+        SecurityGroupIds: [{"Ref": "SGforASG"}]
+        UserData: 
+          Fn::Base64: |
+              #!/bin/bash
+              yum update -y
+              yum install -y httpd.x86_64
+              systemctl start httpd.service
+              systemctl enable httpd.service
+              echo Hello from Xeta CloudFormation Wepapp Project $(curl http://169.254.169.254/Latest/meta-data/public-ipv4)? > /var/www/html/index.html
+
+  WebServerAutoScalingGroup:          
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: SaheedASG
+      LaunchTemplate:
+        LaunchTemplateName: !Ref WebServerLaunchTemplateName
+        Version: !GetAtt WebServerLaunchTemplate.LatestVersionNumber
+      AvailabilityZones: 
+          - eu-north-1a
+          - eu-north-1c
+      MaxSize: 4
+      MinSize: 1
+      DesiredCapacity: 2
+      TargetGroupARNs: 
+        - !Ref ApplicationLoadBalancerTargetGroup
+      VPCZoneIdentifier: 
+          - subnet-0125f545474e468e7
+          - subnet-0f21b7e169f3e1bae 
+
+  ApplicationLoadBalancer: 
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      IpAddressType: ipv4
+      Scheme: internet-facing
+      SecurityGroups: 
+        - !Ref SGforALB
+      Subnets: 
+        - subnet-0125f545474e468e7
+        - subnet-0f21b7e169f3e1bae 
+      Type: application
+
+  ApplicationLoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:       
+      DefaultActions: 
+        - TargetGroupArn: !Ref ApplicationLoadBalancerTargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+     
+  ApplicationLoadBalancerTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 8080
+      Protocol: HTTP      
+      TargetType: instance
+      VpcId: vpc-0e76287140e87bec4
+
+  #CloudwatchLogGroup:
+  HostedZoneCloudatchLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: /aws/route53/webapp
+      RetentionInDays: 1
+
+  #SNS
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: Alerts
+
+  SNSSubscriptions:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !Ref OperatorEMail
+      Protocol: email
+      TopicArn: !Ref SNSTopic
+
+  Hosted Zone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: saheed.com
+      QueryLoggingConfig:
+        CloudWatchLogsLogGroupArn: ! Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/routes/webapp'
+
+
+  #Reaource Record:
+   
+        
+
+
+
+
+
+
+
+
+
+          
+
